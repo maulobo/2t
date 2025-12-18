@@ -1,0 +1,12 @@
+
+# Local Test Scripts
+test-*.js
+test-*.ts
+debug-*.js
+
+node_modules
+.env
+.DS_Store
+dist
+.next
+.vscode

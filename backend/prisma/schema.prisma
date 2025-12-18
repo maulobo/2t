@@ -1,0 +1,304 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  COACH
+  ATHLETE
+}
+
+enum PaymentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  role      Role
+  phone     String?  @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  athlete          AthleteProfile?
+  coach            CoachProfile?
+  coachAthletes    AthleteProfile[] @relation("CoachAthletes")
+  createdTrainings Training[]
+  feeSettings      FeeSettings[]    @relation("CoachFeeSettings")
+  forumPosts       Forum[]          @relation("ForumAuthor")
+}
+
+model CoachProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // futuro: box/gim info
+}
+
+model AthleteProfile {
+  id           String    @id @default(cuid())
+  userId       String    @unique
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fullName     String
+  birthDate    DateTime?
+  notes        String?
+  active       Boolean   @default(true)
+  activityType String? // DEPRECATED: Usar AthleteActivity en su lugar
+
+  // Datos personales adicionales
+  height    Float? // Altura en cm
+  gender    String? // "MALE", "FEMALE", "OTHER"
+  bloodType String? // "A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"
+  city      String?
+  province  String?
+  country   String? @default("Argentina")
+
+  // Contacto de emergencia
+  emergencyContactName  String?
+  emergencyContactPhone String?
+
+  // Objetivos y salud
+  goals       String? // Objetivos personales
+  injuries    String? // Historial de lesiones
+  medications String? // Medicaciones actuales
+
+  coachId String?
+  coach   User?   @relation("CoachAthletes", fields: [coachId], references: [id])
+
+  payments    Payment[]
+  assignments TrainingAssignment[]
+  activities  AthleteActivity[]
+  metrics     AthleteMetric[]
+
+  @@index([coachId])
+}
+
+// Actividades/Planes disponibles en el box
+model Activity {
+  id          String   @id @default(cuid())
+  name        String // "CrossFit", "Funcional", "Musculación", "Open Box"
+  description String? // Descripción de la actividad
+  price       Int? // Precio mensual sugerido en pesos (opcional)
+  active      Boolean  @default(true)
+  color       String? // Color hex para UI (ej: "#FF5733")
+  icon        String? // Icono para UI
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relaciones
+  athleteActivities AthleteActivity[]
+  payments          Payment[]
+  trainings         Training[]
+
+  @@unique([name])
+}
+
+model MembershipPlan {
+  id         String  @id @default(cuid())
+  name       String
+  price      Int // ARS en centavos
+  periodDays Int // 30, 90, etc.
+  active     Boolean @default(true)
+}
+
+model Payment {
+  id           String         @id @default(cuid())
+  athleteId    String
+  athlete      AthleteProfile @relation(fields: [athleteId], references: [id])
+  activityId   String? // Actividad específica que se está pagando
+  activity     Activity?      @relation(fields: [activityId], references: [id])
+  amount       Int // Monto en pesos
+  periodStart  DateTime
+  periodEnd    DateTime
+  status       PaymentStatus  @default(PENDING)
+  createdAt    DateTime       @default(now())
+  approvedAt   DateTime?
+  evidenceUrl  String?
+  evidenceText String?
+
+  @@index([athleteId, status])
+  @@index([periodEnd])
+  @@index([activityId])
+}
+
+// Entrenamientos programados (anteriormente WOD)
+model Training {
+  id          String               @id @default(cuid())
+  title       String // "Entrenamiento de Fuerza", "HIIT Cardio", etc.
+  description String // Descripción detallada del entrenamiento
+  date        DateTime // Fecha del entrenamiento
+  track       String? // Track de música (opcional)
+  videoUrl    String? // URL del video tutorial (YouTube, Vimeo, etc.)
+  activityId  String? // Actividad a la que pertenece (CrossFit, Open Box, etc.)
+  activity    Activity?            @relation(fields: [activityId], references: [id])
+  createdById String
+  createdBy   User                 @relation(fields: [createdById], references: [id])
+  assignments TrainingAssignment[]
+
+  @@index([date])
+  @@index([activityId])
+}
+
+model TrainingAssignment {
+  id         String         @id @default(cuid())
+  trainingId String
+  athleteId  String
+  training   Training       @relation(fields: [trainingId], references: [id])
+  athlete    AthleteProfile @relation(fields: [athleteId], references: [id])
+  // futuro: resultado, tiempo, notas del atleta
+
+  @@unique([trainingId, athleteId])
+}
+
+model MessageTemplate {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  content   String
+  channel   String // "whatsapp"
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model OutboxMessage {
+  id          String    @id @default(cuid())
+  channel     String // "whatsapp"
+  toNumber    String
+  templateKey String?
+  payload     Json
+  scheduledAt DateTime?
+  sentAt      DateTime?
+  status      String    @default("queued") // queued|sent|failed
+  attempts    Int       @default(0)
+  error       String?
+  createdAt   DateTime  @default(now())
+
+  @@index([status, scheduledAt])
+}
+
+model FeeSettings {
+  id           String    @id @default(cuid())
+  amount       Decimal   @db.Decimal(10, 2)
+  currency     String    @default("ARS")
+  activityType String // "PERSONALIZADO_A", "OPEN_BOX", "FUNCIONAL", etc.
+  activityName String // "Personalizado A", "Open Box", "Funcional"
+  validFrom    DateTime
+  validUntil   DateTime?
+  isActive     Boolean   @default(false)
+  description  String?
+  coachId      String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  coach User? @relation("CoachFeeSettings", fields: [coachId], references: [id])
+
+  @@index([activityType, isActive])
+  @@index([coachId])
+}
+
+model AthleteActivity {
+  id         String    @id @default(cuid())
+  athleteId  String
+  activityId String // Referencia a Activity
+  activity   Activity  @relation(fields: [activityId], references: [id])
+  startDate  DateTime  @default(now())
+  endDate    DateTime? // null = activa actualmente
+  isActive   Boolean   @default(true)
+  notes      String? // Notas sobre esta actividad específica
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  athlete AthleteProfile @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+
+  @@unique([athleteId, activityId, startDate])
+  @@index([athleteId, isActive])
+  @@index([activityId])
+}
+
+// Historial de métricas corporales y de rendimiento
+model AthleteMetric {
+  id        String   @id @default(cuid())
+  athleteId String
+  date      DateTime @default(now()) // Fecha de la medición
+
+  // Métricas corporales
+  weight         Float? // Peso en kg
+  bodyFatPercent Float? // % de grasa corporal
+  muscleMass     Float? // Masa muscular en kg
+  bmi            Float? // IMC (se puede calcular: peso / (altura/100)^2)
+
+  // Perímetros en cm
+  waist      Float? // Cintura
+  hip        Float? // Cadera
+  chest      Float? // Pecho
+  rightArm   Float? // Brazo derecho
+  leftArm    Float? // Brazo izquierdo
+  rightThigh Float? // Muslo derecho
+  leftThigh  Float? // Muslo izquierdo
+
+  // Levantamientos - 1RM (One Rep Max) en kg
+  backSquat     Float? // Sentadilla trasera
+  frontSquat    Float? // Sentadilla frontal
+  deadlift      Float? // Peso muerto
+  benchPress    Float? // Press de banca
+  shoulderPress Float? // Press militar
+  cleanAndJerk  Float? // Cargada y envión
+  snatch        Float? // Arrancada
+
+  // Benchmark WODs (tiempos en segundos o reps)
+  franTime    Int? // Fran (21-15-9 Thrusters/Pull-ups) en segundos
+  murphTime   Int? // Murph en segundos
+  cindyRounds Int? // Cindy - rounds completados en 20min
+  graceTime   Int? // Grace (30 Clean & Jerk) en segundos
+  helenTime   Int? // Helen en segundos
+
+  // Otros
+  maxPullUps Int? // Pull-ups consecutivos
+  maxPushUps Int? // Push-ups consecutivos
+  plankTime  Int? // Plancha en segundos
+
+  // Métricas personalizadas dinámicas
+  customMetrics Json? // Objeto JSON para métricas personalizadas definidas por el usuario
+  // Ejemplos: { "overheadSquat": 80, "boxJump": 75, "wallBalls": 30, "customWOD": 300 }
+
+  notes     String? // Notas adicionales sobre esta medición
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  athlete AthleteProfile @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+
+  @@index([athleteId, date])
+  @@index([date])
+}
+
+// Publicaciones del foro/anuncios (Admin escribe, todos leen)
+model Forum {
+  id        String   @id @default(cuid())
+  title     String // Título del post/anuncio
+  content   String   @db.Text // Contenido (puede ser largo)
+  authorId  String
+  author    User     @relation("ForumAuthor", fields: [authorId], references: [id])
+  published Boolean  @default(true) // Si está publicado o borrador
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([published, createdAt])
+  @@index([authorId])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  email     String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([email])
+}
